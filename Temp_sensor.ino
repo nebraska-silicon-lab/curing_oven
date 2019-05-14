@@ -90,7 +90,7 @@ void loop() {
   if (tempValue > 61) { //if warmer than 61 degrees celcius
     digitalWrite(8, HIGH); //cut power to oven
   }
-  if (timePassed > 3) { //if running for longer than one hour
+  if (timePassed > 60) { //if running for longer than one hour
     digitalWrite(8, HIGH); //cuts power
     lcd.clear();
     lcd.write("Cycle complete"); //displays message
