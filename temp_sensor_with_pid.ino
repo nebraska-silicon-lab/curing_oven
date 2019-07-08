@@ -1,75 +1,99 @@
 
 /***************************************************************************************************************
- * LCD: (1-GND), (2-5V), (3-POT), (4-rs), (5-GND), (6-en), (11-d4), (12-d5), (13-d6), (14-d7), (15-5V), (16-GND)
- * PUSHBUTTON: 9, GND
- * RELAY: 3, GND
- * SENSOR: labeled
- * 
- * Open serial monitor before beginning cycle
+ * Start python program before beginning cycle
+ *
+ * When adjusting setpoint: SP listed twice, change preheat function
  ***************************************************************************************************************/
 
-//Included libraries
-#include <LiquidCrystal.h>
+//included libraries
+#include <Adafruit_RGBLCDShield.h>
 #include <Wire.h>
 #include "Adafruit_ADT7410.h"
 #include <PID_v1.h>
 
-//Temperature sensor
-Adafruit_ADT7410 tempsensor = Adafruit_ADT7410(); //names temperature sensor
+//temperature sensor
+Adafruit_ADT7410 tempsensor = Adafruit_ADT7410();
 
 //LCD screen
-const int rs = 12, en = 11, d4 = 4, d5 = 5, d6 = 6, d7 = 7;
-LiquidCrystal lcd(rs, en, d4, d5, d6, d7);
+Adafruit_RGBLCDShield lcd = Adafruit_RGBLCDShield();
 
-//Universal variables
+//universal variables
 unsigned long minutes = 60000;
 unsigned long startTime = millis();
 unsigned long preButton;
 
-//PID setup
-double Setpoint, Input, Output;
-double Kp = 3, Ki = 5, Kd = 1;
-PID myPID(&Input, &Output, &Setpoint, Kp, Ki, Kd, DIRECT);
-int windowSize = 5000; //length of PWM cycle
+//PID and autotune setup
+double setpoint = 50, input = 80, output = 50;
+double kp = 70, ki = .1, kd = 20;
+PID myPID(&input, &output, &setpoint, kp, ki, kd, DIRECT);
+int windowSize = 5000;
 unsigned long windowStartTime;
 
 void setup() {
-  //LCD and serial port
-  lcd.begin(16, 2); //sets up number of rows/columns
-  Serial.begin(115200); //match with serial monitor; not sure (yet) which value best to use
-  Serial.println("Temp. Sensor"); //initially sends to serial port
+
+  delay(1000); //for processing
   
-  //Looking for temperature sensor
+  //LCD and serial port
+  lcd.setBacklight(0x5);
+  lcd.begin(16, 2);
+  Serial.begin(9600);
+  Serial.println("Temp. Sensor");
+  
+  //looking for temperature sensor
   if (!tempsensor.begin()) {
     Serial.println("Couldn't find ADT7410!");
+    lcd.print("Sensor not found");
     while (1);
   }
 
   //SSR controls
-  pinMode(3, OUTPUT); //output pin for SSR
-  digitalWrite(3, LOW); //stops power from flowing to oven until turned on
+  pinMode(3, OUTPUT);
+  digitalWrite(3, LOW);
 
-  //Pushbutton start
-  const byte buttonPin = 9;
-  pinMode(buttonPin, INPUT_PULLUP); //input pin for pushbutton
-  while(digitalRead(9) == HIGH) {
-    Serial.println("Waiting");
-    lcd.write("Waiting...");
-    delay(500);
+  //pushbutton start
+  byte buttons = lcd.readButtons();
+  bool start = false;
+  while(start == false) {
     lcd.clear();
+    Serial.println("Press button to start");
+    lcd.print("Press SELECT");
+    delay(500);
+    if (lcd.readButtons()) {
+      if (lcd.readButtons() & BUTTON_SELECT) {
+        start = true;
+      }
+    }
   }
+  
+ //preparing heating elements for short bursts
+ double tempValue = tempsensor.readTempC();
+ int currentTemp = tempValue;
+ lcd.clear(); lcd.print(tempValue); lcd.print(char(223)); lcd.print("C");
+ Serial.println(tempValue);
+ if(currentTemp < 40) {
+  lcd.setCursor(0,1); lcd.print("Preheating");
+  digitalWrite(3, HIGH);
+  delay(10000);
+  digitalWrite(3, LOW);
+  delay(1000);
+ }
 
-  //PID setup
-  Setpoint = 50;
+  //PID and autotune setup
+  setpoint = 50;
   myPID.SetOutputLimits(0, windowSize);
   myPID.SetMode(AUTOMATIC);
+ 
 
-  //Timing variables
+  //timing variables
   unsigned long currentTime = millis();
-  preButton = currentTime - startTime; //time passed before button pressed
+  preButton = currentTime - startTime;
 }
 
+//for lcd shield:
+uint8_t i=0;
+
 void loop() {
+  
   //delay for temperature sensor
   delay(1000);
   
@@ -79,39 +103,51 @@ void loop() {
 
   //LCD display/serial monitor: temperature and oven state
   if(digitalRead(3) == HIGH) {
-    lcd.clear(); lcd.write("Oven on  - "); lcd.print(tempValue);
+    lcd.clear(); lcd.print(tempValue); lcd.print(char(223)); lcd.print("C"); lcd.print(" (on)");
+    Serial.print(tempValue); Serial.println(",1");
   }
   if(digitalRead(3) == LOW) {
-    lcd.clear(); lcd.write("Oven off - "); lcd.print(tempValue);
+     lcd.clear(); lcd.print(tempValue); lcd.print(char(223)); lcd.print("C"); lcd.print(" (off)");
+     Serial.print(tempValue); Serial.println(",0");
   }
-  Serial.println(tempValue);
   
   //LCD display: time passed
   lcd.setCursor(0,1);
-  lcd.write("Min passed: "); lcd.print(timePassed, 0);
-  
-  //PID functions
-  Input = tempValue;
-  myPID.Compute();
-  unsigned long now = (millis() - preButton);
-  if ((now - windowStartTime) > windowSize) {
-    windowStartTime += windowSize;
-  }
-  if (Output > (now - windowStartTime)) digitalWrite(3, HIGH); //turn on PID
-  else digitalWrite(3, LOW); //turn off PID
+  lcd.print("Min passed: "); lcd.print(timePassed, 0);
 
-  //Timer
-  if (timePassed >= 20) {
+  //PID stuff
+  unsigned long now = (millis() - preButton);
+  input = tempValue;
+  myPID.Compute();
+
+  //preheat function
+  if(tempValue >= 35 && tempValue <= 45) {
+    myPID.SetTunings(5,.0,1);
+  }
+  else{
+    myPID.SetTunings(70,.1,20);
+  }
+
+  //more PID
+  if((now - windowStartTime) > windowSize) { 
+      windowStartTime += windowSize;
+    }
+  if(output > (now - windowStartTime)) digitalWrite(3, HIGH);
+    else digitalWrite(3, LOW);
+  
+  //timer
+  if (timePassed >= 30) {
     digitalWrite(3, LOW);
     lcd.clear();
-    lcd.write("Cycle complete");
+    lcd.print("Cycle complete");
+    Serial.print("Cycle complete");
     lcd.setCursor(0,1);
     while(1){
       float newTempValue = tempsensor.readTempC();
       lcd.setCursor(0,1);
-      lcd.write("Temp: "); lcd.print(newTempValue); lcd.write(" *C");
-      Serial.print("Temp: "); Serial.print(newTempValue); Serial.println(" *C");
+      lcd.print("Temp: "); lcd.print(newTempValue); lcd.print((char)223); lcd.print("C");
+      Serial.print(newTempValue);
       delay(1000);
-    } //if timer expires, cut power to oven, display temp values
+    }
   }
 }
