@@ -2,7 +2,7 @@
 #include <DallasTemperature.h>
 #include <OneWire.h>
 
-#define ONE_WIRE_BUS 2
+#define ONE_WIRE_BUS 2 //define data pin for sensors
 
 OneWire oneWire(ONE_WIRE_BUS);
 
@@ -24,7 +24,7 @@ void loop() {
   Serial.println();
   Serial.print(sensors.getTempCByIndex(2)); Serial.print(", ");
   Serial.print(sensors.getTempCByIndex(0)); Serial.print(", ");
-  Serial.print(sensors.getTempCByIndex(1));
+  Serial.print(sensors.getTempCByIndex(1)); //sensors weren't reading linearly
 
   delay(1000);
 
